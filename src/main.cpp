@@ -27,7 +27,7 @@ static sqlite3* database = nullptr;
 static HANDLE libraryLock = INVALID_HANDLE_VALUE;
 static bool closeApproved = false;
 static bool selfTest = false;
-static fs::path pendingPdf;
+static fs::path pendingPdf, pendingExplanation;
 
 static std::string utf8(const std::wstring& s) {
     if(s.empty()) return {};
@@ -91,7 +91,7 @@ static json loadState() {
     Statement s("SELECT payload,revision FROM state WHERE id=1");
     if(s.step()!=SQLITE_ROW) throw std::runtime_error("저장 데이터가 없습니다.");
     auto state=json::parse(s.value(0)); validateState(state);
-    return {{"state",state},{"revision",sqlite3_column_int64(s.p,1)},{"dataPath",utf8(dataDir.wstring())},{"version","0.1.0"},{"pendingPdf",pendingPdf.empty()?"":utf8(pendingPdf.stem().wstring())}};
+    return {{"state",state},{"revision",sqlite3_column_int64(s.p,1)},{"dataPath",utf8(dataDir.wstring())},{"version","0.2.0"},{"pendingExplanation",!pendingExplanation.empty()},{"pendingPdf",pendingPdf.empty()?"":utf8(pendingPdf.stem().wstring())}};
 }
 static json saveState(const json& args) {
     const auto& state=args.at("state"); validateState(state); std::string payload=state.dump();
@@ -115,8 +115,9 @@ static fs::path pickPdf() {
     ComPtr<IShellItem> item; check(dialog->GetResult(&item),"파일 선택 오류");
     PWSTR raw=nullptr; check(item->GetDisplayName(SIGDN_FILESYSPATH,&raw),"파일 경로 오류"); fs::path result(raw); CoTaskMemFree(raw); return result;
 }
-static json importPdf() {
-    auto path=pendingPdf.empty()?pickPdf():pendingPdf; pendingPdf.clear(); if(path.empty()) return nullptr;
+static json importPdf(bool explanation=false) {
+    auto& pending=explanation?pendingExplanation:pendingPdf;
+    auto path=pending.empty()?pickPdf():pending; pending.clear(); if(path.empty()) return nullptr;
     if(fs::file_size(path)>512ULL*1024*1024) throw std::runtime_error("512 MB 이하의 PDF를 선택해 주세요.");
     std::ifstream input(path,std::ios::binary); char header[5]{}; input.read(header,5);
     if(std::string(header,5)!="%PDF-") throw std::runtime_error("PDF 형식의 파일이 아닙니다.");
@@ -128,6 +129,7 @@ static json dispatch(const std::string& action, const json& args) {
     if(action=="load") return loadState();
     if(action=="save") return saveState(args);
     if(action=="importPdf") return importPdf();
+    if(action=="importExplanation") return importPdf(true);
     if(action=="openData") { ShellExecuteW(windowHandle,L"open",dataDir.c_str(),nullptr,nullptr,SW_SHOWNORMAL); return true; }
     if(action=="backup") {
         ComPtr<IFileOpenDialog> dialog; check(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog)),"백업 위치 선택 오류");
@@ -256,7 +258,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         for(int i=1;i<argc;i++) {
             if(std::wstring(argv[i])==L"--self-test") selfTest=true;
             if(std::wstring(argv[i])==L"--data-dir" && i+1<argc) dataDir=fs::absolute(argv[++i]);
-            if(std::wstring(argv[i])==L"--pdf" && i+1<argc) pendingPdf=fs::absolute(argv[++i]);
+            if(std::wstring(argv[i])==L"--explanation" && i+1<argc) pendingExplanation=fs::absolute(argv[++i]);
+            else if(std::wstring(argv[i])==L"--pdf" && i+1<argc) pendingPdf=fs::absolute(argv[++i]);
             else if(fs::path(argv[i]).extension()==L".pdf") pendingPdf=fs::absolute(argv[i]);
         } LocalFree(argv);
         if(selfTest) runSelfTest();
