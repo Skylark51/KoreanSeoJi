@@ -23,6 +23,9 @@ test('범위를 다시 크롭해도 하이라이터가 원본 위치에 남는�
   assert.ok(Math.abs(r.left-(.6-.507)/.468*100)<1e-9);
   assert.ok(Math.abs(r.top-15)<1e-9);
   assert.equal(evidenceOverlap(region,{...segment,page:1}),null);
-  assert.deepEqual(evidenceOverlap(region,{page:2,x:.65,y:.25,w:.1,h:.1}),
-    {left:0,top:10.000000000000009,width:50.00000000000004,height:50.000000000000014});
+  const partial=evidenceOverlap(region,{page:2,x:.65,y:.25,w:.1,h:.1});
+  assert.ok(Math.abs(partial.left)<1e-9);
+  assert.ok(Math.abs(partial.top-10)<1e-9);
+  assert.ok(Math.abs(partial.width-50)<1e-9);
+  assert.ok(Math.abs(partial.height-50)<1e-9);
 });
