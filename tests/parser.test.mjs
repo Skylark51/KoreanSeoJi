@@ -40,3 +40,20 @@ test('참조 하나가 양쪽에서 보이며 역방향 중복 연결을 막는�
   const state={links:[]};assert.equal(addReference(state,'q1','q2','조건 추론'),true);assert.equal(addReference(state,'q2','q1'),false);
   assert.equal(state.links.length,1);assert.equal(referencesFor(state,'q1')[0].target,'q2');assert.equal(referencesFor(state,'q2')[0].target,'q1');assert.throws(()=>addReference(state,'q1','q1'));
 });
+import {indexExplanations} from '../web/parser.mjs';
+test('3단 해설은 단·페이지를 잇고 새 지문 해제에서 멈춘다',()=>{
+ const l=(text,y,x)=>({text,y,x,w:.24,h:.01});
+ const result=indexExplanations([
+  page([l('1 ② 2 ④',.25,.10),l('45 ⑤',.27,.10),l('1. [출제의도] 조건을 이해한다.',.4,.10),l('해설 본문',.5,.10),l('이어지는 해설',.15,.375),l('2. [출제의도] 추론한다.',.3,.375),l('다음 단까지 계속',.85,.375),l('세 번째 단',.15,.645)]),
+  page([l('다음 페이지 첫 문장',.14,.10),l('[3~4] 새 지문의 해제',.3,.10),l('문항 해설이 아닌 글',.4,.10),l('3. [출제의도] 비교한다.',.6,.10)])
+ ]);
+ assert.equal(result.entries.length,3);assert.equal(result.entries[0].segments.length,2);
+ assert.deepEqual(result.entries[1].segments.map(s=>[s.page,s.column]),[[1,1],[1,2],[2,0]]);
+ assert.match(result.entries[1].text,/다음 페이지 첫 문장/);assert.doesNotMatch(result.entries[1].text,/새 지문|문항 해설이 아닌/);
+ assert.equal(result.entries[0].answer,'②');assert.equal(result.entries[1].answer,'④');
+ const last=indexExplanations([page([l('45 ⑤',.2,.10),l('45. [출제의도] 마지막 문항',.4,.10)])]);assert.equal(last.entries[0].answer,'⑤');
+});
+test('선택적 여백 정리는 빈 단과 쪽 번호를 제외한다',()=>{
+ const r=indexDocument([page([line('1. 첫 문제',.3),line('① 선지',.4),line('1 20',.93),line('2. 다음 문제',.3,1),line('① 선지',.4,1)])],{trimWhitespace:true});
+ assert.equal(r.questions[0].segments.length,1);assert.ok(r.questions[0].segments[0].y+r.questions[0].segments[0].h<.5);
+});

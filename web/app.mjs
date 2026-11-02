@@ -1,5 +1,5 @@
 import * as pdfjs from './vendor/pdf.mjs';
-import {uid,textItemsToLines,mergeFragments,indexDocument,referencesFor,addReference} from './parser.mjs';
+import {uid,textItemsToLines,mergeFragments,indexDocument,indexExplanations,referencesFor,addReference} from './parser.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc=new URL('./vendor/pdf.worker.mjs',import.meta.url).href;
 const $=id=>document.getElementById(id);
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -62,6 +62,8 @@ async function navigate(pid,qid,push=false){
 function render(){
   renderProjects();const p=project();$('welcome').hidden=!!p;$('workspace').hidden=!p;
   $('currentProject').textContent=p?.title||'시작하기';if(!p)return;
+  $('importExplanation').hidden=!p.source;$('reindexExplanation').hidden=!p.explanationSource;
+  $('importExplanation').textContent=p.explanationSource?'해설 PDF 교체':'＋ 해설 PDF';
   $('projectTitle').textContent=p.title;$('projectMeta').textContent=p.source?`${p.source.name} · ${p.pages?.length||p.source.pages||'?'}쪽`:'기출 프로젝트';
   $('projectEmpty').hidden=!!p.source;$('study').hidden=!p.source;
   $('importPdf').hidden=!!p.source;
@@ -82,7 +84,7 @@ async function getDocument(p){
     loading.onPassword=()=>{loading.destroy();toast('암호가 걸린 PDF는 암호를 해제한 뒤 가져와 주세요.',true);};
     const promise=loading.promise.catch(e=>{documents.delete(p.source.id);throw new Error(`PDF를 열지 못했습니다. 원본 파일과 암호 여부를 확인해 주세요. (${e.message})`);});
     documents.set(p.source.id,promise);
-    if(documents.size>3){const [id,old]=documents.entries().next().value;documents.delete(id);old.then(d=>d.destroy()).catch(()=>{});}
+    if(documents.size>3){const [id,old]=documents.entries().next().value;documents.delete(id);old.then(d=>d.loadingTask.destroy()).catch(()=>{});}
   }
   return documents.get(p.source.id);
 }
@@ -114,6 +116,9 @@ async function renderQuestion(){
   $('reviewed').textContent=q.reviewed?'✓ 확인 완료 · 다시 검토':'✓ 인식 범위 확인 완료';
   $('prevQuestion').disabled=p.questions.indexOf(q)===0;$('nextQuestion').disabled=p.questions.indexOf(q)===p.questions.length-1;
   loadNotes(q);renderReferences();
+  $('explanationBox').open=false;$('explanationPaper').replaceChildren();
+  $('explanationBadge').textContent=q.explanation?.segments?.length?(q.explanation.reviewed?'· 확인 완료':'· 검토 필요'):'· 미연결';
+  $('explanationMeta').textContent=p.explanationSource?`${q.explanation?.answer?'정답 '+q.explanation.answer+' · ':''}${p.explanationSource.name} · ${q.explanation?.segments?.length?'문항 번호로 연결한 해설입니다. 원본 범위를 확인해 주세요.':'이 문항의 해설을 찾지 못했습니다. 범위 수정으로 지정하세요.'}`:'프로젝트 위의 ＋ 해설 PDF 버튼으로 가져오세요.';
   await Promise.all([renderSegments($('passagePaper'),passage?.segments,p,token),renderSegments($('questionPaper'),q.segments,p,token)]);
 }
 function loadNotes(q){$('noteTitle').textContent=`${q.number}번 · 사고 기록`;$('noteThought').value=q.notes?.thought||'';$('noteShould').value=q.notes?.should||'';$('noteSummary').value=q.notes?.summary||'';$('noteTags').value=q.tags||'';}
@@ -153,7 +158,7 @@ async function ensureOcr(){
   });
   await ocrWorker.setParameters({preserve_interword_spaces:'1'});return ocrWorker;
 }
-async function ocrPage(page){
+async function ocrPage(page,columns=2){
   const viewport=page.getViewport({scale:2.1}),canvas=document.createElement('canvas');canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);
   await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
   const worker=await ensureOcr();
@@ -163,32 +168,42 @@ async function ocrPage(page){
     const b=word.bbox;fragments.push({text:word.text,x:b.x0/canvas.width,y:b.y0/canvas.height,w:(b.x1-b.x0)/canvas.width,h:(b.y1-b.y0)/canvas.height});
   }
   canvas.width=canvas.height=1;
-  return mergeFragments(fragments);
+  return mergeFragments(fragments,columns);
 }
-async function analyze(p,{columns=2,forceOcr=false}={}){
+async function analyze(p,{columns=2,forceOcr=false,explanation=false}={}){
   if(analysis)throw new Error('다른 PDF를 인식 중입니다.');
   analysis={cancelled:false,page:1};const task=analysis;
   showBusy('지문과 문제를 정리하고 있습니다','원본의 문항 번호와 페이지 경계를 확인합니다.');
   try{
-    const doc=await getDocument(p),pages=[];
+    const doc=await getDocument(explanation?{source:p.explanationSource}:p),pages=[];
     for(let n=1;n<=doc.numPages;n++){
       if(task.cancelled)throw new Error('인식을 중단했습니다. PDF는 보관되어 있으며 다시 인식하거나 수동으로 추가할 수 있습니다.');
-      task.page=n;showBusy('지문과 문제를 정리하고 있습니다',`${n} / ${doc.numPages}쪽 · 글자 위치와 2단 읽기 순서를 분석 중`,(n-1)/doc.numPages*100);
+      task.page=n;showBusy('지문과 문제를 정리하고 있습니다',`${n} / ${doc.numPages}쪽 · 글자 위치와 ${columns}단 읽기 순서를 분석 중`,(n-1)/doc.numPages*100);
       const page=await doc.getPage(n),viewport=page.getViewport({scale:1});
-      const content=await page.getTextContent();let lines=textItemsToLines(content.items,viewport,pdfjs.Util.transform),ocr=false;
+      const content=await page.getTextContent();let lines=textItemsToLines(content.items,viewport,pdfjs.Util.transform,columns),ocr=false;
       const text=lines.map(l=>l.text).join('');
       if(forceOcr || text.replace(/\s/g,'').length<35 || (text.match(/�/g)||[]).length>text.length*.15){
         showBusy('스캔 페이지를 인식하고 있습니다',`${n} / ${doc.numPages}쪽 · 한국어 OCR 준비 중 · 첫 인식은 시간이 걸릴 수 있습니다.`,(n-1)/doc.numPages*100);
-        lines=await ocrPage(page);ocr=true;
+        lines=await ocrPage(page,columns);ocr=true;
       }
       pages.push({width:viewport.width,height:viewport.height,lines,ocr});
       await new Promise(r=>setTimeout(r,0));
     }
     if(task.cancelled)throw new Error('인식을 중단했습니다.');
-    const result=indexDocument(pages,{columns});
+    if(explanation){
+      const result=indexExplanations(pages,{columns});
+      for(const q of p.questions){const found=result.entries.find(e=>e.number===q.number);if(found)q.explanation=found;}
+      const missing=p.questions.filter(q=>!result.entries.some(e=>e.number===q.number));
+      if(missing.length)result.warnings.push(`해설 미검출: ${missing.map(q=>q.number).join(', ')}번. 기존 해설이 없는 문항은 수동으로 지정해 주세요.`);
+      p.explanationPages=result.pages;p.explanationWarnings=result.warnings;p.explanationOptions={columns,forceOcr};p.explanationSource.pages=doc.numPages;
+      changed();await flush();render();toast(`${result.entries.length}개 해설을 찾았습니다. 누락된 기존 해설은 유지합니다.`);
+      if(result.warnings.length)dialog('해설 인식 확인',`<p>${escape(result.warnings.join(' '))}</p>`);
+      return;
+    }
+    const result=indexDocument(pages,{columns,trimWhitespace:true});
     // Stable IDs preserve notes and cross-project links when recognition is repeated.
     const oldByNumber=new Map(p.questions.map(q=>[q.number,q]));
-    for(const q of result.questions){const old=oldByNumber.get(q.number);if(old){q.id=old.id;q.notes=old.notes;q.tags=old.tags;q.status=old.status;}}
+    for(const q of result.questions){const old=oldByNumber.get(q.number);if(old){q.id=old.id;q.notes=old.notes;q.tags=old.tags;q.status=old.status;q.explanation=old.explanation;}}
     const recognized=new Set(result.questions.map(q=>q.number));
     const missingOld=p.questions.filter(q=>!recognized.has(q.number));
     if(missingOld.length){result.questions.push(...missingOld);result.questions.sort((a,b)=>a.number-b.number);result.passages.push(...p.passages.filter(old=>missingOld.some(q=>q.passageId===old.id)));result.warnings.push('다시 인식하지 못한 기존 문제는 메모와 참조 보호를 위해 유지했습니다. 범위를 검토해 주세요.');}
@@ -196,6 +211,22 @@ async function analyze(p,{columns=2,forceOcr=false}={}){
     questionId=p.questions[0]?.id||null;state.settings.lastProject=p.id;state.settings.lastQuestion=questionId;changed();await flush();render();
     toast(`${p.questions.length}개 문제와 ${p.passages.length}개 지문을 찾았습니다. 범위를 확인해 주세요.`);
   }finally{analysis=null;$('busy').hidden=true;if(ocrWorker){await ocrWorker.terminate().catch(()=>{});ocrWorker=null;}}
+}
+async function importExplanation(){
+  const p=project();if(!p?.source)throw new Error('문제 PDF를 먼저 가져와 주세요.');
+  if(p.explanationSource){dialog('해설 PDF 교체','<p>현재 해설은 저장 이력에 남습니다. 새 PDF에서 인식하지 못한 해설은 수동으로 연결해야 합니다.</p>',actionButton('교체할 PDF 선택','replaceExplanation',true));$('replaceExplanation').onclick=()=>{ $('dialog').close();selectExplanation().catch(report);};return;}
+  await selectExplanation();
+}
+async function selectExplanation(){
+  await flush();const file=await rpc('importExplanation');if(!file)return;
+  const p=project();p.explanationSource=file;for(const q of p.questions)delete q.explanation;
+  changed();await flush();render();reindexExplanationDialog();
+}
+function reindexExplanationDialog(){
+  const p=project();if(!p?.explanationSource)return;
+  dialog('해설 PDF 인식','<p>문항 번호와 [출제의도] 제목으로 해설을 연결합니다. 정답표와 지문 해제는 문항 해설에서 제외합니다.</p><label for="explanationColumns">원본 편집 방식</label><select id="explanationColumns"><option value="3">3단 · 교육청 정답 및 해설</option><option value="2">2단</option><option value="1">1단</option></select><label for="explanationOcr">문자 인식</label><select id="explanationOcr"><option value="auto">텍스트 우선 · 스캔 자동 OCR</option><option value="force">모든 페이지 OCR</option></select>',actionButton('해설 인식','analyzeExplanation',true));
+  $('explanationColumns').value=p.explanationOptions?.columns||3;
+  $('analyzeExplanation').onclick=()=>{const options={columns:+$('explanationColumns').value,forceOcr:$('explanationOcr').value==='force',explanation:true};$('dialog').close();analyze(p,options).catch(report);};
 }
 async function importPdf(){
   const p=project();if(!p)return;if(p.source)throw new Error('새 PDF는 새 프로젝트에 가져와 주세요.');
@@ -222,10 +253,11 @@ function addQuestion(){
 async function cropEditor(kind='question',readOnly=false){
   const p=project(),q=question();if(!p?.source)return;if(!q&&!readOnly){toast('문제를 먼저 추가해 주세요.');return;}
   const passage=q&&p.passages.find(x=>x.id===q.passageId);
-  let segments=structuredClone(kind==='passage'?passage?.segments||[]:q?.segments||[]);
+  const explanation=kind==='explanation';if(explanation&&!p.explanationSource)throw new Error('해설 PDF를 먼저 가져와 주세요.');
+  let segments=structuredClone(kind==='passage'?passage?.segments||[]:explanation?q?.explanation?.segments||[]:q?.segments||[]);
   let pageNumber=segments[0]?.page||1,drag=null,currentSelection=null,pageGeneration=0,cropRender=null;
-  const doc=await getDocument(p);
-  dialog(readOnly?'원본 PDF':`${kind==='passage'?'지문':'문제'} 범위 수정`,
+  const doc=await getDocument(explanation?{source:p.explanationSource}:p);
+  dialog(readOnly?(explanation?'해설 원본 PDF':'원본 PDF'):`${kind==='passage'?'지문':explanation?'해설':'문제'} 범위 수정`,
     `<p class="tiny">${readOnly?'원본 페이지를 넘기며 확인할 수 있습니다.':'원본에서 드래그하여 영역을 선택하고 「선택 영역 추가」를 누르세요. 다음 페이지에서도 추가하면 하나로 이어집니다. 추가한 순서대로 표시됩니다.'}</p><div class="crop-page-controls"><button id="cropPrev">←</button><span id="cropPageLabel"></span><button id="cropNext">→</button></div><div class="crop-layout"><div class="crop-viewport" id="cropViewport"><canvas id="cropCanvas"></canvas><div class="crop-selection" id="cropSelection" hidden></div></div><aside class="crop-tools">${readOnly?'':`<button id="cropAdd" disabled>＋ 선택 영역 추가</button><button id="cropLeft">왼쪽 단 전체 추가</button><button id="cropRight">오른쪽 단 전체 추가</button><button id="cropFull">현재 페이지 전체 추가</button><p class="tiny">기존 영역은 ×로 지운 뒤 새 영역을 추가할 수 있습니다.</p><div id="cropSegments"></div>${kind==='passage'?`<label for="applyGroup">이 지문을 함께 볼 문제</label><input id="applyGroup" value="${escape(p.questions.filter(x=>passage&&x.passageId===passage.id).map(x=>x.number).join(', ')||q.number)}" placeholder="예: 4,5,6,7" style="width:100%;font-size:10px;padding:7px;margin-top:8px"><p class="tiny">쉼표로 번호를 구분합니다.</p>`:''}`}</aside></div>`,actionButton('닫기','cropCancel')+(readOnly?'':actionButton('범위 저장','cropSave',true)));
   $('dialog').className='crop-dialog';$('cropCancel').onclick=()=>$('dialog').close();
   function list(){if(readOnly)return;$('cropSegments').innerHTML=segments.map((s,i)=>`<div class="segment-item"><button data-segment="${i}" title="영역 제거">×</button>${i+1}. 원본 ${s.page}쪽<br><small>${Math.round(s.w*100)}% 폭 · ${Math.round(s.h*100)}% 높이</small></div>`).join('');$('cropSegments').querySelectorAll('button').forEach(b=>b.onclick=()=>{segments.splice(+b.dataset.segment,1);list();});}
@@ -261,7 +293,7 @@ async function cropEditor(kind='question',readOnly=false){
           if(!target){target={id:uid(),label:'직접 지정한 공통 지문',segments:[],text:''};p.passages.push(target);}
           target.segments=segments;target.reviewed=true;target.label=`${nums.join(', ')}번 공통 지문`;
           for(const item of p.questions){if(nums.includes(item.number))item.passageId=target.id;else if(item.passageId===target.id)item.passageId=null;}
-        }else{q.segments=segments;q.reviewed=true;}
+        }else if(explanation){q.explanation={...q.explanation,number:q.number,segments,reviewed:true};}else{q.segments=segments;q.reviewed=true;}
         changed();await flush();$('dialog').close();renderQuestion().catch(report);toast('페이지를 잇는 영역을 저장했습니다.');
       }catch(e){report(e);}
     };
@@ -274,6 +306,9 @@ async function historyDialog(){
   $('historyList').querySelectorAll('button').forEach(b=>b.onclick=async()=>{try{const result=await rpc('restoreRevision',{id:+b.dataset.restore});state=result.state;changed();await flush();projectId=state.projects.some(p=>p.id===projectId)?projectId:state.projects[0]?.id;questionId=project()?.questions[0]?.id||null;$('dialog').close();render();toast('선택한 저장 이력을 복원했습니다.');}catch(e){report(e);}});
 }
 
+on('importExplanation','click',importExplanation);on('reindexExplanation','click',reindexExplanationDialog);
+on('editExplanation','click',()=>cropEditor('explanation'));on('originalExplanation','click',()=>cropEditor('explanation',true));
+on('explanationBox','toggle',()=>{if($('explanationBox').open){const p=project(),q=question();return renderSegments($('explanationPaper'),q?.explanation?.segments,{source:p.explanationSource},renderToken);}});
 on('newProject','click',newProject);on('startProject','click',newProject);
 on('renameProject','click',()=>{const p=project();if(p)askText('프로젝트 이름 수정','시험 이름',p.title,async title=>{p.title=title;changed();await flush();render();});});
 on('importPdf','click',importPdf);on('importPdfEmpty','click',importPdf);on('reindex','click',reindexDialog);
@@ -310,4 +345,5 @@ try{
     const p={id:uid(),title:loaded.pendingPdf,createdAt:new Date().toISOString(),source:null,questions:[],passages:[],pages:[],warnings:[]};
     state.projects.push(p);projectId=p.id;questionId=null;changed();await flush();render();await importPdf().catch(report);
   }
+  if(loaded.pendingExplanation){if(project()?.source)await selectExplanation();else toast('문제 PDF가 있는 프로젝트를 먼저 만들어 주세요.',true);}
 }catch(e){status('저장소를 열 수 없음','error');report(e);dialog('저장소를 열지 못했습니다',`<p>${escape(e.message)}</p><p>기존 Data 폴더를 보존한 상태로 프로그램을 다시 실행해 주세요.</p>`);}
