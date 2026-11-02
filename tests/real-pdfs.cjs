@@ -14,7 +14,7 @@ async function launch(first){
 async function rpc(action,args={}){return page.evaluate(({action,args})=>new Promise((resolve,reject)=>{const id='test-'+crypto.randomUUID();const handler=e=>{if(e.data.id!==id)return;chrome.webview.removeEventListener('message',handler);e.data.ok?resolve(e.data.result):reject(Error(e.data.error));};chrome.webview.addEventListener('message',handler);chrome.webview.postMessage({id,action,args});}),{action,args});}
 async function close(){await page.evaluate(()=>{void window.requestClose();}).catch(()=>{});await new Promise((r,j)=>{if(app.exitCode!==null)return r();app.once('exit',r);setTimeout(()=>j(Error('close timeout')),15000).unref();});await browser.close();browser=null;}
 (async()=>{
- await fs.mkdir(data,{recursive:true});const exists=await fs.access(path.join(data,'library.sqlite3')).then(()=>true,()=>false);await launch(!exists);
+ await fs.mkdir(data,{recursive:true});await fs.mkdir(path.join(root,'tmp/real'),{recursive:true});const exists=await fs.access(path.join(data,'library.sqlite3')).then(()=>true,()=>false);await launch(!exists);
  if(exists){await page.locator('#reindex').waitFor();const before=(await rpc('load')).state.projects.at(-1).questions.map(q=>q.explanation);await page.locator('#reindex').click();await page.locator('#reindexConfirm').click();await page.locator('#busy').waitFor({state:'hidden',timeout:60000});assert.deepEqual((await rpc('load')).state.projects.at(-1).questions.map(q=>q.explanation),before);await page.locator('#reindexExplanation').click();}
  await page.locator('#analyzeExplanation').waitFor({timeout:60000});await page.locator('#analyzeExplanation').click();
  await page.locator('#busy').waitFor({state:'hidden',timeout:60000});await page.waitForFunction(()=>document.querySelector('#saveState').textContent.includes('모든 변경 사항'));
@@ -49,4 +49,3 @@ async function close(){await page.evaluate(()=>{void window.requestClose();}).ca
  await close();assert.deepEqual(errors,[]);
  console.log('PASS: real 16-page exam + 5-page explanation, 45 questions, 11 passages, 45 linked explanations/answers, all rendered, reopen persistence');console.log('Data:',data);
 })().catch(async e=>{console.error(e);console.error(errors);if(page)console.error((await page.locator('body').innerText().catch(()=>'' )).slice(-2000));if(app&&app.exitCode===null)app.kill();process.exitCode=1;});
-
