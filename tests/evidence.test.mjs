@@ -1,0 +1,28 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {regionFromDrag,evidenceOverlap,segmentDisplayWidths} from '../web/evidence.mjs';
+
+test('단별 크롭의 텍스트가 같은 원본 배율과 왼쪽 기준선으로 렌더링된다',()=>{
+  const segments=[{page:1,x:.025,y:.1,w:.468,h:.5},{page:1,x:.507,y:.1,w:.468,h:.5},{page:2,x:.025,y:.1,w:.234,h:.2}];
+  assert.deepEqual(segmentDisplayWidths(segments,[{width:600},{width:600}]),[100,100,50]);
+});
+
+test('드래그 영역을 크롭이 아닌 원본 PDF 좌표에 저장한다',()=>{
+  const segment={page:2,x:.507,y:.2,w:.468,h:.4};
+  const r=regionFromDrag(segment,{x:.1,y:.15},{x:.6,y:.3});
+  assert.equal(r.page,2);assert.ok(Math.abs(r.x-.5538)<1e-9);
+  assert.ok(Math.abs(r.y-.26)<1e-9);assert.ok(Math.abs(r.w-.234)<1e-9);
+  assert.ok(Math.abs(r.h-.06)<1e-9);
+  assert.equal(regionFromDrag(segment,{x:.1,y:.1},{x:.101,y:.1}),null);
+});
+
+test('범위를 다시 크롭해도 하이라이터가 원본 위치에 남는다',()=>{
+  const region={page:2,x:.6,y:.26,w:.1,h:.05};
+  const segment={page:2,x:.507,y:.2,w:.468,h:.4};
+  const r=evidenceOverlap(region,segment);
+  assert.ok(Math.abs(r.left-(.6-.507)/.468*100)<1e-9);
+  assert.ok(Math.abs(r.top-15)<1e-9);
+  assert.equal(evidenceOverlap(region,{...segment,page:1}),null);
+  assert.deepEqual(evidenceOverlap(region,{page:2,x:.65,y:.25,w:.1,h:.1}),
+    {left:0,top:10.000000000000009,width:50.00000000000004,height:50.000000000000014});
+});
