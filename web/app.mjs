@@ -95,7 +95,7 @@ async function renderSegments(container,segments,p,token){
     if(token!==renderToken)return;
     const s=segments[i];if(s.page<1||s.page>doc.numPages)continue;
     if(i && s.page!==segments[i-1].page){const next=document.createElement('div');next.className='continuation';next.textContent=`다음 페이지로 이어지는 내용 · ${s.page}쪽`;container.append(next);}
-    const caption=document.createElement('div');caption.className='paper-caption';caption.innerHTML=`<span>원본 ${s.page}쪽${s.column!=null?' · '+(s.column===0?'왼쪽':'오른쪽')+' 단':''}</span><span>${i+1} / ${segments.length}</span>`;
+    const caption=document.createElement('div');caption.className='paper-caption';caption.innerHTML=`<span>원본 ${s.page}쪽${s.column!=null?' · '+(s.column+1)+'단':''}</span><span>${i+1} / ${segments.length}</span>`;
     const paper=document.createElement('div');paper.className='paper-segment';paper.style.width=`${zoom*100}%`;const canvas=document.createElement('canvas');paper.append(canvas);container.append(caption,paper);
     const page=await doc.getPage(s.page),base=page.getViewport({scale:1});
     const scale=Math.min(4,Math.max(1.3,(container.clientWidth||500)*window.devicePixelRatio*zoom/(base.width*s.w)));
