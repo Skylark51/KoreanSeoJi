@@ -1,5 +1,6 @@
 import * as pdfjs from './vendor/pdf.mjs';
 import {uid,textItemsToLines,mergeFragments,indexDocument,indexExplanations,referencesFor,addReference} from './parser.mjs';
+import {regionFromDrag,evidenceOverlap,segmentDisplayWidths} from './evidence.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc=new URL('./vendor/pdf.worker.mjs',import.meta.url).href;
 const $=id=>document.getElementById(id);
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -11,6 +12,7 @@ window.chrome.webview.addEventListener('message',e=>{
 function rpc(action,args={}) {return new Promise((resolve,reject)=>{const id=++rpcId;pending.set(id,{resolve,reject});window.chrome.webview.postMessage({id,action,args});});}
 let state,revision=0,projectId=null,questionId=null,dirty=false,saving=null,saveTimer=null,zoom=1,renderToken=0;
 let analysis=null,ocrWorker=null,toastTimer=null,notesOpen=false,navHistory=[];
+let markingEvidence=false,evidenceDraft=null;
 const documents=new Map();
 const project=()=>state?.projects.find(p=>p.id===projectId);
 const question=()=>project()?.questions.find(q=>q.id===questionId);
@@ -88,26 +90,123 @@ async function getDocument(p){
   }
   return documents.get(p.source.id);
 }
-async function renderSegments(container,segments,p,token){
+function updateEvidenceMode(){
+  const q=question(),button=$('linkEvidence'),hint=$('evidenceHint');
+  button.disabled=!q;
+  button.classList.toggle('active',markingEvidence);
+  button.textContent=markingEvidence?'× 연결 취소':'✎ 근거 연결';
+  hint.textContent=!q?'문항을 먼저 선택하세요.':
+    !markingEvidence?'근거 연결을 누르고 문제와 지문의 해당 부분을 차례로 드래그하세요.':
+    evidenceDraft?.question?'지문의 정답 근거를 드래그해 연결을 완성하세요.':
+    evidenceDraft?.passage?'오른쪽 문제의 근거가 되는 부분을 드래그해 연결을 완성하세요.':
+    '문제 또는 지문에서 먼저 영역을 드래그하세요. Esc로 취소할 수 있습니다.';
+}
+function jumpEvidence(id,area){
+  const el=[...document.querySelectorAll('.evidence-mark[data-evidence-id]')].find(x=>x.dataset.evidenceId===id&&x.dataset.evidenceArea===area);
+  if(el){el.scrollIntoView({behavior:'smooth',block:'center'});el.classList.add('evidence-active');setTimeout(()=>el.classList.remove('evidence-active'),1500);}
+  else toast('표시 영역이 현재 크롭에 없습니다. 범위 수정에서 원본을 확인해 주세요.');
+}
+function renderEvidenceList(){
+  const q=question(),list=q?.evidence||[];
+  $('evidenceCount').textContent=list.length;
+  $('evidenceList').innerHTML=list.length?list.map((item,i)=>`<div class="evidence-item">
+    <button data-evidence-jump="${escape(item.id)}" data-evidence-target="question">문제 ${i+1}</button>
+    <button data-evidence-jump="${escape(item.id)}" data-evidence-target="passage">↔ 지문 ${i+1}</button>
+    <input data-evidence-note="${escape(item.id)}" value="${escape(item.note||'')}" placeholder="이 근거가 정답인 이유" aria-label="${i+1}번 근거 메모" maxlength="300">
+    <button class="evidence-remove" data-evidence-remove="${escape(item.id)}" aria-label="${i+1}번 연결 삭제">×</button>
+  </div>`).join(''):'<p class="evidence-empty">연결한 근거가 없습니다.</p>';
+  $('evidenceList').querySelectorAll('[data-evidence-jump]').forEach(b=>b.onclick=()=>jumpEvidence(b.dataset.evidenceJump,b.dataset.evidenceTarget));
+  $('evidenceList').querySelectorAll('[data-evidence-note]').forEach(input=>input.oninput=()=>{
+    const entry=q.evidence.find(x=>x.id===input.dataset.evidenceNote);
+    if(entry){entry.note=input.value;changed();}
+  });
+  $('evidenceList').querySelectorAll('[data-evidence-remove]').forEach(b=>b.onclick=()=>{
+    q.evidence=q.evidence.filter(x=>x.id!==b.dataset.evidenceRemove);
+    changed();renderEvidenceList();renderQuestion().catch(report);
+  });
+}
+function attachEvidenceLayer(paper,segment,area,q){
+  if(!area||!q)return;
+  for(const [index,item] of (q.evidence||[]).entries()){
+    const overlap=evidenceOverlap(item[area],segment);
+    if(!overlap)continue;
+    const mark=document.createElement('button');
+    mark.type='button';
+    mark.className='evidence-mark evidence-'+(['gold','blue','rose'].includes(item.color)?item.color:'gold');
+    mark.dataset.evidenceId=item.id;
+    mark.dataset.evidenceArea=area;
+    mark.textContent=String(index+1);
+    mark.title=`근거 ${index+1}: 클릭하면 ${area==='passage'?'문제':'지문'}의 연결 위치로 이동합니다.`;
+    Object.assign(mark.style,{left:overlap.left+'%',top:overlap.top+'%',width:overlap.width+'%',height:overlap.height+'%'});
+    mark.onclick=()=>jumpEvidence(item.id,area==='passage'?'question':'passage');
+    mark.onmouseenter=()=>document.querySelectorAll('.evidence-mark').forEach(x=>x.classList.toggle('evidence-active',x.dataset.evidenceId===item.id));
+    mark.onmouseleave=()=>document.querySelectorAll('.evidence-mark').forEach(x=>x.classList.remove('evidence-active'));
+    paper.append(mark);
+  }
+  if(!markingEvidence||question()?.id!==q.id)return;
+  const draftPart=evidenceDraft?.questionId===q.id?evidenceDraft[area]:null;
+  const overlap=evidenceOverlap(draftPart,segment);
+  if(overlap){
+    const mark=document.createElement('div');mark.className='evidence-mark is-draft evidence-'+(evidenceDraft.color||'gold');
+    mark.textContent='…';Object.assign(mark.style,{left:overlap.left+'%',top:overlap.top+'%',width:overlap.width+'%',height:overlap.height+'%'});paper.append(mark);
+  }
+  const layer=document.createElement('div');layer.className='evidence-hit-layer';layer.setAttribute('aria-label','드래그하여 근거 범위 선택');
+  const selection=document.createElement('div');selection.className='evidence-selection';selection.hidden=true;
+  paper.append(layer,selection);
+  let start=null;
+  const point=e=>{const r=layer.getBoundingClientRect();return {x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};};
+  layer.onpointerdown=e=>{
+    if(e.button!==0)return;
+    start=point(e);layer.setPointerCapture(e.pointerId);e.preventDefault();
+  };
+  layer.onpointermove=e=>{
+    if(!start)return;
+    const end=point(e);selection.hidden=false;
+    Object.assign(selection.style,{left:Math.min(start.x,end.x)*100+'%',top:Math.min(start.y,end.y)*100+'%',
+      width:Math.abs(start.x-end.x)*100+'%',height:Math.abs(start.y-end.y)*100+'%'});
+  };
+  layer.onpointercancel=()=>{start=null;selection.hidden=true;};
+  layer.onpointerup=e=>{
+    if(!start)return;
+    const rect=regionFromDrag(segment,start,point(e));start=null;selection.hidden=true;
+    if(!rect)return;
+    if(!evidenceDraft||evidenceDraft.questionId!==q.id)evidenceDraft={questionId:q.id,color:$('evidenceColor').value};
+    evidenceDraft[area]=rect;
+    if(evidenceDraft.passage&&evidenceDraft.question){
+      q.evidence??=[];
+      q.evidence.push({id:uid(),color:evidenceDraft.color,passage:evidenceDraft.passage,question:evidenceDraft.question,note:''});
+      evidenceDraft=null;markingEvidence=false;changed();toast('문제와 지문의 근거를 연결하고 로컬 저장했습니다.');
+    }
+    updateEvidenceMode();renderQuestion().catch(report);
+  };
+}
+
+async function renderSegments(container,segments,p,token,area=''){
   container.replaceChildren();if(!segments?.length){container.innerHTML='<div class="empty-message">아직 지정된 영역이 없습니다.<br>범위 수정에서 원본의 영역을 선택해 주세요.</div>';return;}
   const doc=await getDocument(p);
+  const displayWidths=segmentDisplayWidths(segments,p.pages||[]);
   for(let i=0;i<segments.length;i++){
     if(token!==renderToken)return;
     const s=segments[i];if(s.page<1||s.page>doc.numPages)continue;
     if(i && s.page!==segments[i-1].page){const next=document.createElement('div');next.className='continuation';next.textContent=`다음 페이지로 이어지는 내용 · ${s.page}쪽`;container.append(next);}
     const caption=document.createElement('div');caption.className='paper-caption';caption.innerHTML=`<span>원본 ${s.page}쪽${s.column!=null?' · '+(s.column+1)+'단':''}</span><span>${i+1} / ${segments.length}</span>`;
-    const paper=document.createElement('div');paper.className='paper-segment';paper.style.width=`${zoom*100}%`;const canvas=document.createElement('canvas');paper.append(canvas);container.append(caption,paper);
+    const paper=document.createElement('div');paper.className='paper-segment aligned-segment';paper.style.width=`${zoom*displayWidths[i]}%`;const canvas=document.createElement('canvas');paper.append(canvas);container.append(caption,paper);
     const page=await doc.getPage(s.page),base=page.getViewport({scale:1});
-    const scale=Math.min(4,Math.max(1.3,(container.clientWidth||500)*window.devicePixelRatio*zoom/(base.width*s.w)));
+    const sourceWidth=base.width*s.w/Math.max(.00001,displayWidths[i]/100);
+    const scale=Math.min(4,Math.max(1.3,(container.clientWidth||500)*window.devicePixelRatio*zoom/sourceWidth));
     const viewport=page.getViewport({scale});canvas.width=Math.ceil(viewport.width*s.w);canvas.height=Math.ceil(viewport.height*s.h);
     const task=page.render({canvasContext:canvas.getContext('2d'),viewport,transform:[1,0,0,1,-s.x*viewport.width,-s.y*viewport.height],background:'rgb(255,255,255)'});
     await task.promise;
+    if(token!==renderToken)return;
+    if(area)attachEvidenceLayer(paper,s,area,question());
   }
 }
 async function renderQuestion(){
   const token=++renderToken,p=project(),q=question();
+  if(evidenceDraft&&evidenceDraft.questionId!==q?.id){evidenceDraft=null;markingEvidence=false;}
+  updateEvidenceMode();
   $('notes').hidden=!notesOpen||!q;
-  if(!q){$('passageLabel').textContent='지문';$('questionLabel').textContent='문제';$('referenceCount').textContent='0';$('questionPaper').innerHTML='<div class="empty-message">인식된 문제가 없습니다.<br>위의 ＋ 문제 버튼으로 직접 추가할 수 있습니다.</div>';$('passagePaper').replaceChildren();$('references').replaceChildren();return;}
+  if(!q){$('evidenceCount').textContent='0';$('evidenceList').replaceChildren();$('passageLabel').textContent='지문';$('questionLabel').textContent='문제';$('referenceCount').textContent='0';$('questionPaper').innerHTML='<div class="empty-message">인식된 문제가 없습니다.<br>위의 ＋ 문제 버튼으로 직접 추가할 수 있습니다.</div>';$('passagePaper').replaceChildren();$('references').replaceChildren();return;}
   const passage=p.passages.find(x=>x.id===q.passageId);
   $('passageLabel').textContent=passage?.label||'공통 지문';
   const pages=[...new Set((passage?.segments||[]).map(s=>s.page))];$('passagePages').textContent=pages.length?`${pages.join(', ')}쪽`:'';
@@ -115,11 +214,11 @@ async function renderQuestion(){
   $('reviewBadge').textContent=q.reviewed?'확인 완료':'검토 필요';$('reviewBadge').className='badge'+(q.reviewed?' reviewed':'');
   $('reviewed').textContent=q.reviewed?'✓ 확인 완료 · 다시 검토':'✓ 인식 범위 확인 완료';
   $('prevQuestion').disabled=p.questions.indexOf(q)===0;$('nextQuestion').disabled=p.questions.indexOf(q)===p.questions.length-1;
-  loadNotes(q);renderReferences();
+  loadNotes(q);renderReferences();renderEvidenceList();
   $('explanationBox').open=false;$('explanationPaper').replaceChildren();
   $('explanationBadge').textContent=q.explanation?.segments?.length?(q.explanation.reviewed?'· 확인 완료':'· 검토 필요'):'· 미연결';
   $('explanationMeta').textContent=p.explanationSource?`${q.explanation?.answer?'정답 '+q.explanation.answer+' · ':''}${p.explanationSource.name} · ${q.explanation?.segments?.length?'문항 번호로 연결한 해설입니다. 원본 범위를 확인해 주세요.':'이 문항의 해설을 찾지 못했습니다. 범위 수정으로 지정하세요.'}`:'프로젝트 위의 ＋ 해설 PDF 버튼으로 가져오세요.';
-  await Promise.all([renderSegments($('passagePaper'),passage?.segments,p,token),renderSegments($('questionPaper'),q.segments,p,token)]);
+  await Promise.all([renderSegments($('passagePaper'),passage?.segments,p,token,'passage'),renderSegments($('questionPaper'),q.segments,p,token,'question')]);
 }
 function loadNotes(q){$('noteTitle').textContent=`${q.number}번 · 사고 기록`;$('noteThought').value=q.notes?.thought||'';$('noteShould').value=q.notes?.should||'';$('noteSummary').value=q.notes?.summary||'';$('noteTags').value=q.tags||'';}
 function renderReferences(){
@@ -135,7 +234,7 @@ function searchDialog(mode='search'){
     const query=$('searchInput').value.trim().toLowerCase();const matches=[];
     for(const p of state.projects)for(const q of p.questions){
       if(mode==='reference' && (q.id===current.id || referencesFor(state,current.id).some(r=>r.target===q.id)))continue;
-      const text=[p.title,`${q.number}번`,q.text,q.tags,...Object.values(q.notes||{})].join(' ').toLowerCase();
+      const text=[p.title,`${q.number}번`,q.text,q.tags,...Object.values(q.notes||{}),...(q.evidence||[]).map(e=>e.note||'')].join(' ').toLowerCase();
       if(!query||query.split(/\s+/).every(t=>text.includes(t)))matches.push({p,q});
     }
     $('searchResults').innerHTML=matches.length?matches.slice(0,100).map(({p,q})=>`<button class="search-result" data-result="${escape(q.id)}"><small>${escape(p.title)}</small><strong>${q.number}번 · ${escape(q.title||'직접 추가한 문제')}</strong><p>${escape(q.notes?.summary||q.notes?.thought||q.text||'아직 메모가 없습니다.')}</p></button>`).join(''):'<p>일치하는 문제가 없습니다.</p>';
@@ -203,7 +302,7 @@ async function analyze(p,{columns=2,forceOcr=false,explanation=false}={}){
     const result=indexDocument(pages,{columns,trimWhitespace:true});
     // Stable IDs preserve notes and cross-project links when recognition is repeated.
     const oldByNumber=new Map(p.questions.map(q=>[q.number,q]));
-    for(const q of result.questions){const old=oldByNumber.get(q.number);if(old){q.id=old.id;q.notes=old.notes;q.tags=old.tags;q.status=old.status;q.explanation=old.explanation;}}
+    for(const q of result.questions){const old=oldByNumber.get(q.number);if(old){q.id=old.id;q.notes=old.notes;q.tags=old.tags;q.status=old.status;q.explanation=old.explanation;q.evidence=old.evidence||[];}}
     const recognized=new Set(result.questions.map(q=>q.number));
     const missingOld=p.questions.filter(q=>!recognized.has(q.number));
     if(missingOld.length){result.questions.push(...missingOld);result.questions.sort((a,b)=>a.number-b.number);result.passages.push(...p.passages.filter(old=>missingOld.some(q=>q.passageId===old.id)));result.warnings.push('다시 인식하지 못한 기존 문제는 메모와 참조 보호를 위해 유지했습니다. 범위를 검토해 주세요.');}
@@ -308,8 +407,11 @@ async function historyDialog(){
 
 on('importExplanation','click',importExplanation);on('reindexExplanation','click',reindexExplanationDialog);
 on('editExplanation','click',()=>cropEditor('explanation'));on('originalExplanation','click',()=>cropEditor('explanation',true));
-on('explanationBox','toggle',()=>{if($('explanationBox').open){const p=project(),q=question();return renderSegments($('explanationPaper'),q?.explanation?.segments,{source:p.explanationSource},renderToken);}});
+on('explanationBox','toggle',()=>{if($('explanationBox').open){const p=project(),q=question();return renderSegments($('explanationPaper'),q?.explanation?.segments,{source:p.explanationSource,pages:p.explanationPages},renderToken);}});
 on('newProject','click',newProject);on('startProject','click',newProject);
+on('goHome','click',()=>{markingEvidence=false;evidenceDraft=null;notesOpen=false;projectId=null;questionId=null;render();});
+on('quickSearch','click',()=>searchDialog());on('quickBackup','click',()=>$('backup').click());
+on('quickHistory','click',()=>$('history').click());on('quickFolder','click',()=>$('openData').click());
 on('renameProject','click',()=>{const p=project();if(p)askText('프로젝트 이름 수정','시험 이름',p.title,async title=>{p.title=title;changed();await flush();render();});});
 on('importPdf','click',importPdf);on('importPdfEmpty','click',importPdf);on('reindex','click',reindexDialog);
 on('addQuestion','click',addQuestion);on('original','click',()=>cropEditor('question',true));on('editQuestion','click',()=>cropEditor('question'));on('editPassage','click',()=>cropEditor('passage'));
@@ -321,6 +423,11 @@ on('toggleNotes','click',()=>{if(!question())return;notesOpen=!notesOpen;$('note
 for(const [id,key] of [['noteThought','thought'],['noteShould','should'],['noteSummary','summary']])on(id,'input',()=>{const q=question();if(q){q.notes??={thought:'',should:'',summary:''};q.notes[key]=$(id).value;changed();renderTabs();renderProjects();}});
 on('noteTags','input',()=>{const q=question();if(q){q.tags=$('noteTags').value;changed();}});
 on('addReference','click',()=>searchDialog('reference'));on('globalSearch','click',()=>searchDialog());
+on('linkEvidence','click',()=>{
+  const q=question(),p=project();if(!q)return;
+  if(!markingEvidence&&!(p.passages.find(x=>x.id===q.passageId)?.segments?.length)){toast('왼쪽 지문 범위를 먼저 지정해 주세요.',true);return;}
+  markingEvidence=!markingEvidence;evidenceDraft=null;updateEvidenceMode();renderQuestion().catch(report);
+});
 on('zoomIn','click',()=>{zoom=Math.min(2,zoom+.15);return renderQuestion();});on('zoomOut','click',()=>{zoom=Math.max(.6,zoom-.15);return renderQuestion();});
 on('saveState','click',async()=>{await flush();toast('현재 내용이 로컬에 저장되었습니다.');});
 on('openData','click',()=>rpc('openData'));on('backup','click',async()=>{await flush();const backup=await rpc('backup');if(backup)dialog('백업을 만들었습니다',`<p>메모, 상호 참조, 원본 PDF를 함께 복사했습니다.</p><p style="word-break:break-all">${escape(backup.path)}</p><p>다른 PC로 옮길 때는 실행 파일과 Data 폴더를 함께 옮기면 됩니다.</p>`);});
@@ -329,6 +436,7 @@ on('cancelAnalysis','click',()=>{if(analysis){analysis.cancelled=true;$('busyDet
 document.addEventListener('keydown',e=>{
   if(e.ctrlKey&&e.key.toLowerCase()==='k'){e.preventDefault();searchDialog();}
   if(e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();flush().then(()=>toast('저장했습니다.')).catch(report);}
+  if(e.key==='Escape'&&markingEvidence){markingEvidence=false;evidenceDraft=null;updateEvidenceMode();renderQuestion().catch(report);}
   if(e.altKey&&e.key==='ArrowLeft'&&navHistory.length){e.preventDefault();const target=navHistory.pop();navigate(target.pid,target.qid).catch(report);}
 });
 window.requestClose=async()=>{

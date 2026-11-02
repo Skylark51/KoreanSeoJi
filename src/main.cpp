@@ -91,7 +91,7 @@ static json loadState() {
     Statement s("SELECT payload,revision FROM state WHERE id=1");
     if(s.step()!=SQLITE_ROW) throw std::runtime_error("저장 데이터가 없습니다.");
     auto state=json::parse(s.value(0)); validateState(state);
-    return {{"state",state},{"revision",sqlite3_column_int64(s.p,1)},{"dataPath",utf8(dataDir.wstring())},{"version","0.2.0"},{"pendingExplanation",!pendingExplanation.empty()},{"pendingPdf",pendingPdf.empty()?"":utf8(pendingPdf.stem().wstring())}};
+    return {{"state",state},{"revision",sqlite3_column_int64(s.p,1)},{"dataPath",utf8(dataDir.wstring())},{"version","0.3.0"},{"pendingExplanation",!pendingExplanation.empty()},{"pendingPdf",pendingPdf.empty()?"":utf8(pendingPdf.stem().wstring())}};
 }
 static json saveState(const json& args) {
     const auto& state=args.at("state"); validateState(state); std::string payload=state.dump();
@@ -198,14 +198,14 @@ static void extractAssets() {
 static void setupWebview() {
     auto profile=dataDir/L".runtime"/L"browser";
     HRESULT start=CreateCoreWebView2EnvironmentWithOptions(nullptr,profile.c_str(),nullptr,Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>([](HRESULT result,ICoreWebView2Environment* env)->HRESULT {
-        if(FAILED(result)||!env) { MessageBoxW(windowHandle,L"Microsoft Edge WebView2 Runtime이 필요합니다. Microsoft 공식 WebView2 Runtime을 설치한 후 다시 실행해 주세요.",L"국어 서지",MB_ICONERROR); closeApproved=true; PostMessageW(windowHandle,WM_CLOSE,0,0); return S_OK; }
+        if(FAILED(result)||!env) { MessageBoxW(windowHandle,L"Microsoft Edge WebView2 Runtime이 필요합니다. Microsoft 공식 WebView2 Runtime을 설치한 후 다시 실행해 주세요.",L"국어 기출 학습",MB_ICONERROR); closeApproved=true; PostMessageW(windowHandle,WM_CLOSE,0,0); return S_OK; }
         ComPtr<ICoreWebView2Environment> environment=env;
         return env->CreateCoreWebView2Controller(windowHandle,Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>([environment](HRESULT hr,ICoreWebView2Controller* c)->HRESULT {
-            if(FAILED(hr)||!c) { MessageBoxW(windowHandle,L"화면을 시작할 수 없습니다.",L"국어 서지",MB_ICONERROR); closeApproved=true; PostMessageW(windowHandle,WM_CLOSE,0,0); return S_OK; }
+            if(FAILED(hr)||!c) { MessageBoxW(windowHandle,L"화면을 시작할 수 없습니다.",L"국어 기출 학습",MB_ICONERROR); closeApproved=true; PostMessageW(windowHandle,WM_CLOSE,0,0); return S_OK; }
             controller=c; controller->get_CoreWebView2(&webview); RECT bounds; GetClientRect(windowHandle,&bounds); controller->put_Bounds(bounds);
             ComPtr<ICoreWebView2Settings> settings; webview->get_Settings(&settings); settings->put_AreDevToolsEnabled(FALSE); settings->put_AreDefaultContextMenusEnabled(FALSE); settings->put_IsStatusBarEnabled(FALSE);
             ComPtr<ICoreWebView2_3> web3; webview.As(&web3);
-            if(!web3) { MessageBoxW(windowHandle,L"WebView2 Runtime을 업데이트해 주세요.",L"국어 서지",MB_ICONERROR); closeApproved=true; PostMessageW(windowHandle,WM_CLOSE,0,0); return S_OK; }
+            if(!web3) { MessageBoxW(windowHandle,L"WebView2 Runtime을 업데이트해 주세요.",L"국어 기출 학습",MB_ICONERROR); closeApproved=true; PostMessageW(windowHandle,WM_CLOSE,0,0); return S_OK; }
             web3->SetVirtualHostNameToFolderMapping(L"seoji.local",uiDir.c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
             web3->SetVirtualHostNameToFolderMapping(L"pdf.seoji.local",(dataDir/L"pdfs").c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
             EventRegistrationToken token;
@@ -266,14 +266,14 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         else {
             initDatabase(); extractAssets();
             WNDCLASSW wc{}; wc.lpfnWndProc=windowProc; wc.hInstance=instance; wc.lpszClassName=L"KoreanSeoJiWindow"; wc.hCursor=LoadCursor(nullptr,IDC_ARROW); wc.hbrBackground=CreateSolidBrush(RGB(246,247,249)); wc.hIcon=LoadIcon(instance,MAKEINTRESOURCE(2)); RegisterClassW(&wc);
-            windowHandle=CreateWindowExW(0,wc.lpszClassName,L"국어 서지 · KoreanSeoJi",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1440,960,nullptr,nullptr,instance,nullptr);
+            windowHandle=CreateWindowExW(0,wc.lpszClassName,L"국어 기출 학습 · KoreanSeoJi",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1440,960,nullptr,nullptr,instance,nullptr);
             if(!windowHandle) throw std::runtime_error("창을 만들 수 없습니다."); ShowWindow(windowHandle,show); setupWebview();
             MSG message; while(GetMessageW(&message,nullptr,0,0)>0) { TranslateMessage(&message); DispatchMessageW(&message); }
         }
     } catch(const std::exception& error) {
         result=1;
         if(selfTest) { fs::create_directories(dataDir); std::ofstream(dataDir/L"selftest-result.txt") << "FAIL: " << error.what(); }
-        else MessageBoxW(windowHandle,wide(std::string(error.what())+"\n\nData 폴더는 삭제하지 말고 보존해 주세요.").c_str(),L"국어 서지",MB_ICONERROR);
+        else MessageBoxW(windowHandle,wide(std::string(error.what())+"\n\nData 폴더는 삭제하지 말고 보존해 주세요.").c_str(),L"국어 기출 학습",MB_ICONERROR);
     }
     controller.Reset(); webview.Reset();
     if(database) { sqlite3_wal_checkpoint_v2(database,nullptr,SQLITE_CHECKPOINT_TRUNCATE,nullptr,nullptr); sqlite3_close(database); }
