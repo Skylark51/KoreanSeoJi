@@ -1,0 +1,10 @@
+/build/
+/dist/
+/.deps/
+/Data/
+/tmp/
+__pycache__/
+*.user
+*.pdb
+*.obj
+.DS_Store

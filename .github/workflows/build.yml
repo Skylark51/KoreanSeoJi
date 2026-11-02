@@ -1,0 +1,39 @@
+name: Build Windows portable
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Parser and reference tests
+        run: node --test tests/parser.test.mjs
+      - name: Build C++ executable
+        run: python scripts/build.py
+      - name: Storage test
+        shell: pwsh
+        run: |
+          $check = Start-Process -FilePath ./dist/KoreanSeoJi.exe -ArgumentList '--self-test', '--data-dir', "$env:RUNNER_TEMP\seoji-selftest" -PassThru -Wait -WindowStyle Hidden
+          Get-Content "$env:RUNNER_TEMP\seoji-selftest\selftest-result.txt"
+          if ($check.ExitCode -ne 0) { exit $check.ExitCode }
+      - name: Package portable executable
+        run: python scripts/package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KoreanSeoJi-portable-win-x64
+          path: |
+            dist/KoreanSeoJi-portable-v0.1.0-win-x64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error

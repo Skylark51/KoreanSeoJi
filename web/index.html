@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:; connect-src 'self' https://pdf.seoji.local blob:; object-src 'none'; base-uri 'none'">
+  <title>국어 서지</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">서</span><div>국어 서지<small>KOREAN SEOJI</small></div></div>
+    <button class="search-trigger" id="globalSearch"><span>⌕</span> 문제와 메모 검색 <kbd>Ctrl K</kbd></button>
+    <div class="side-label">내 기출 프로젝트 <button id="newProject" title="프로젝트 만들기">＋</button></div>
+    <nav id="projects"></nav>
+    <div class="side-bottom"><span class="local-dot"></span> 나의 컴퓨터에 보관<div class="side-tools"><button id="backup">전체 백업</button><button id="openData">저장 폴더</button><button id="history">이력</button></div><small id="version">KoreanSeoJi · 0.1.0</small></div>
+  </aside>
+  <main>
+    <header class="topbar"><div class="breadcrumb">나의 서재 <span>/</span> <strong id="currentProject">시작하기</strong></div><div class="save-state" id="saveState"><i></i> 로컬 저장 준비 중</div></header>
+    <section id="welcome" class="welcome">
+      <div class="welcome-copy"><div class="eyebrow">읽고, 생각하고, 연결하다</div><h1>문제 너머의 생각을<br>나만의 서재에.</h1><p>기출의 지문과 문제를 나란히 읽고,<br>그때의 생각을 남기세요.<br>닮은 문제를 연결하면 공부의 맥락이 쌓입니다.</p><button class="primary" id="startProject">첫 프로젝트 만들기 <span>＋</span></button><div class="welcome-foot">설치 없이 실행 · 오프라인 학습 · 로컬 자동 저장</div></div>
+      <div class="welcome-visual"><div class="visual-paper"><small>READ · THINK · CONNECT</small><h2>하나의 지문,<br>여러 갈래의 생각.</h2><div class="fake-line"></div><div class="fake-line"></div><div class="fake-line short"></div><div class="fake-highlight"></div><div class="fake-line"></div><div class="fake-line short"></div><div class="visual-ref">↔ 같은 출제 의도를 묻는 문제</div></div><div class="visual-note"><span>나의 사고 기록</span><p>어떤 근거를 놓쳤을까?<br>다음에는 무엇을 먼저 볼까?</p><small>생각은 저장되고, 이해는 연결됩니다.</small></div></div>
+    </section>
+    <section id="workspace" hidden>
+      <div class="project-heading"><div><div class="eyebrow" id="projectMeta">기출 프로젝트</div><h1 id="projectTitle"></h1></div><div class="heading-actions"><button id="renameProject" class="subtle">이름 수정</button><button id="importPdf" class="primary">＋ PDF 가져오기</button></div></div>
+      <div id="projectEmpty" class="empty-import" hidden><div class="empty-icon">▤</div><h2>기출 PDF를 가져와 주세요</h2><p>문항 번호와 공통 지문을 자동으로 찾아 정리합니다.<br>스캔 PDF는 이 컴퓨터에서 OCR로 인식합니다.</p><button id="importPdfEmpty" class="primary">PDF 선택</button><small>원본 파일은 프로젝트 저장 폴더에 복사하여 보관합니다.</small></div>
+      <div id="study" hidden>
+        <div class="study-toolbar"><div class="question-tabs" id="questionTabs"></div><div class="toolbar-actions"><button id="addQuestion" title="문제 수동 추가">＋ 문제</button><button id="original">원본 / 범위 수정</button><button id="reindex">다시 인식</button></div></div>
+        <div id="warning" class="warning" hidden></div>
+        <div class="reading-grid">
+          <section class="reading-pane passage-pane"><div class="pane-heading"><div><span class="pane-dot"></span><strong id="passageLabel">지문</strong><span class="muted" id="passagePages"></span></div><div><button class="icon-btn" id="editPassage">범위 수정</button><button class="icon-btn" id="zoomOut">－</button><button class="icon-btn" id="zoomIn">＋</button></div></div><div class="paper-scroll" id="passagePaper"></div></section>
+          <section class="reading-pane question-pane"><div class="pane-heading"><div><span class="pane-dot amber"></span><strong id="questionLabel">문제</strong><span id="reviewBadge" class="badge">검토 필요</span></div><button class="note-toggle" id="toggleNotes">▧ 자세히 · 메모</button></div><div class="question-scroll"><div class="question-controls"><button id="prevQuestion">← 이전</button><select id="questionStatus"><option value="new">아직 풀지 않음</option><option value="solved">풀었음</option><option value="review">다시 볼 문제</option><option value="done">정리 완료</option></select><button id="nextQuestion">다음 →</button></div><div id="questionPaper"></div><div class="review-row"><button id="reviewed">✓ 인식 범위 확인 완료</button><button id="editQuestion">문제 범위 수정</button></div><section class="references"><div class="section-title"><div><span>↔</span> 연결된 문제 <small id="referenceCount">0</small></div><button id="addReference">＋ 참조 연결</button></div><div id="references"></div><p class="reference-hint">한 번 연결하면 두 문제에 함께 표시됩니다.</p></section></div></section>
+        </div>
+      </div>
+    </section>
+    <div id="busy" class="busy" hidden><div class="spinner"></div><strong id="busyTitle">PDF를 읽고 있습니다</strong><p id="busyDetail"></p><progress id="busyProgress" max="100" value="0"></progress><button id="cancelAnalysis">인식 중단</button></div>
+  </main>
+  <aside id="notes" class="notes" hidden><div class="notes-heading"><div><span>MY THINKING NOTE</span><h2 id="noteTitle">문제 사고 기록</h2></div><button id="closeNotes">×</button></div><p class="notes-intro">정답보다, 정답에 이르는 생각을 남기세요.</p><label>01 <strong>문제를 풀 때 한 생각</strong><textarea id="noteThought" placeholder="어떤 근거를 골랐고, 어떻게 판단했나요?"></textarea></label><label>02 <strong>했어야 할 생각</strong><textarea id="noteShould" placeholder="놓친 조건, 필요한 추론, 다른 접근을 적어 보세요."></textarea></label><label>03 <strong>정리 · 출제 의도</strong><textarea id="noteSummary" placeholder="이 문제는 무엇을 물었나요?"></textarea></label><label class="tags-label">키워드<input id="noteTags" placeholder="예: 인과관계, 조건 추론, 선지 비교"></label><div class="notes-footer"><span>●</span> 입력 내용은 자동으로 로컬에 저장됩니다.</div></aside>
+  <dialog id="dialog"><div id="dialogContent"></div></dialog>
+  <div id="toast" class="toast" hidden></div>
+  <script src="vendor/tesseract.min.js"></script>
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>
