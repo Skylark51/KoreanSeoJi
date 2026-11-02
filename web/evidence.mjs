@@ -25,3 +25,21 @@ export function segmentDisplayWidths(segments,pages=[]) {
   const widest=Math.max(1,...widths);
   return widths.map(width=>width/widest*100);
 }
+
+// Horizontal pen strokes use normalized coordinates of the original PDF page.
+export function underlineFromDrag(segment,start,end) {
+  if(!segment||segment.w<=0||segment.h<=0)return null;
+  const x1=clamp(start.x),x2=clamp(end.x);
+  if(Math.abs(x2-x1)<.015)return null;
+  const y=(clamp(start.y)+clamp(end.y))/2;
+  return {page:segment.page,x:segment.x+Math.min(x1,x2)*segment.w,
+    y:segment.y+y*segment.h,w:Math.abs(x2-x1)*segment.w};
+}
+export function underlineOverlap(stroke,segment) {
+  if(!stroke||stroke.page!==segment.page||segment.w<=0||segment.h<=0)return null;
+  if(stroke.y<segment.y||stroke.y>segment.y+segment.h)return null;
+  const x=Math.max(stroke.x,segment.x),right=Math.min(stroke.x+stroke.w,segment.x+segment.w);
+  if(right<=x)return null;
+  return {left:(x-segment.x)/segment.w*100,
+    top:(stroke.y-segment.y)/segment.h*100,width:(right-x)/segment.w*100};
+}
