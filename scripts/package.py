@@ -3,7 +3,7 @@ import hashlib, zipfile, shutil
 ROOT=Path(__file__).resolve().parents[1]
 exe=ROOT/'dist/KoreanSeoJi.exe'
 if not exe.exists(): raise SystemExit('Build the executable first.')
-archive=ROOT/'dist/KoreanSeoJi-portable-v0.3.0-win-x64.zip'
+archive=ROOT/'dist/KoreanSeoJi-portable-v0.3.1-win-x64.zip'
 with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
     z.write(exe,exe.name)
     z.write(ROOT/'README.md','사용안내.md')

@@ -91,7 +91,7 @@ static json loadState() {
     Statement s("SELECT payload,revision FROM state WHERE id=1");
     if(s.step()!=SQLITE_ROW) throw std::runtime_error("저장 데이터가 없습니다.");
     auto state=json::parse(s.value(0)); validateState(state);
-    return {{"state",state},{"revision",sqlite3_column_int64(s.p,1)},{"dataPath",utf8(dataDir.wstring())},{"version","0.3.0"},{"pendingExplanation",!pendingExplanation.empty()},{"pendingPdf",pendingPdf.empty()?"":utf8(pendingPdf.stem().wstring())}};
+    return {{"state",state},{"revision",sqlite3_column_int64(s.p,1)},{"dataPath",utf8(dataDir.wstring())},{"version","0.3.1"},{"pendingExplanation",!pendingExplanation.empty()},{"pendingPdf",pendingPdf.empty()?"":utf8(pendingPdf.stem().wstring())}};
 }
 static json saveState(const json& args) {
     const auto& state=args.at("state"); validateState(state); std::string payload=state.dump();

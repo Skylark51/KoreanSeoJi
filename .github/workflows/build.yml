@@ -34,6 +34,6 @@ jobs:
         with:
           name: KoreanSeoJi-portable-win-x64
           path: |
-            dist/KoreanSeoJi-portable-v0.3.0-win-x64.zip
+            dist/KoreanSeoJi-portable-v0.3.1-win-x64.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
