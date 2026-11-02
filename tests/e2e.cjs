@@ -45,7 +45,21 @@ async function saved(){await page.waitForFunction(()=>document.querySelector('#s
   await page.locator('#noteSummary').fill('조건 관계를 읽고 새 사례에 적용하는 출제 의도.');
   await page.locator('#noteTags').fill('조건 추론, 논리 관계');
   await saved();
-  await page.locator('#closeNotes').click();
+  // The note editor opens the direct underline mode and closes to expose the PDF.
+  await page.locator('#noteUnderline').click();
+  assert.equal(await page.locator('#notes').isVisible(),false);
+  await page.locator('#questionPaper .evidence-hit-layer').first().waitFor();
+  const hit=await page.locator('#questionPaper .evidence-hit-layer').first().boundingBox();
+  assert.ok(hit?.width>80);
+  await page.mouse.move(hit.x+hit.width*.15,hit.y+hit.height*.35);
+  await page.mouse.down();
+  await page.mouse.move(hit.x+hit.width*.65,hit.y+hit.height*.35,{steps:8});
+  await page.mouse.up();
+  await page.waitForFunction(()=>document.querySelector('#underlineCount')?.textContent==='1');
+  assert.equal(await page.locator('#questionPaper .underline-mark').count(),1);
+  await page.locator('[data-underline-note]').fill('선지의 판단 근거에 밑줄');
+  await saved();
+  await page.locator('#underlineEvidence').click();
   await page.locator('#addReference').click();
   await page.locator('#referenceLabel').fill('같은 조건 추론을 요구함');
   await page.locator('.search-result').first().click();
@@ -81,6 +95,8 @@ async function saved(){await page.waitForFunction(()=>document.querySelector('#s
   assert.equal(await page.locator('#noteThought').inputValue(),'선지의 조건을 충분조건으로 오해했다. 재실행 검증.');
   assert.equal(await page.locator('#noteShould').inputValue(),'필요조건과 충분조건의 방향을 구별한다.');
   assert.equal(await page.locator('#noteTags').inputValue(),'조건 추론, 논리 관계');
+  assert.equal(await page.locator('#underlineCount').innerText(),'1');
+  assert.equal(await page.locator('[data-underline-note]').inputValue(),'선지의 판단 근거에 밑줄');
   assert.equal(await page.locator('#referenceCount').innerText(),'1');
   await page.locator('#closeNotes').click();
   // Re-index must keep note IDs and symmetric cross-references intact.
